@@ -494,7 +494,8 @@ lazy val `scio-test`: Project = project
       "com.spotify" % "annoy" % annoyVersion % "test",
       "com.spotify.sparkey" % "sparkey" % sparkeyVersion % "test",
       "com.novocode" % "junit-interface" % junitInterfaceVersion,
-      "junit" % "junit" % junitVersion % "test"
+      "junit" % "junit" % junitVersion % "test",
+      "com.lihaoyi" %% "pprint" % "0.5.9"
     ),
     (Test / compileOrder) := CompileOrder.JavaThenScala
   )
