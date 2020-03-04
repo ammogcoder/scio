@@ -39,7 +39,7 @@ import org.apache.avro.generic.GenericRecord
 import org.apache.avro.specific.SpecificRecordBase
 
 private[testing] case class TestWrapper[T](value: T) {
-  override def toString: String = TestWrapper.printer.apply(value).render
+  override def toString: String = Pretty.printer.apply(value).render
   override def equals(other: Any): Boolean =
     other match {
       case TestWrapper(o) if value.getClass.isArray && o.getClass().isArray() =>
@@ -50,62 +50,6 @@ private[testing] case class TestWrapper[T](value: T) {
 }
 
 object TestWrapper {
-  import pprint.Tree
-
-  private def renderFieldName(n: String) =
-    Tree.Lazy(ctx => List(fansi.Color.LightBlue(n).toString).iterator)
-
-  private def renderGenericRecord: PartialFunction[GenericRecord, Tree] = {
-    case g =>
-      val renderer =
-        new pprint.Renderer(
-          printer.defaultWidth,
-          printer.colorApplyPrefix,
-          printer.colorLiteral,
-          printer.defaultIndent
-        )
-      def render(tree: Tree): fansi.Str =
-        fansi.Str.join(renderer.rec(tree, 0, 0).iter.toSeq: _*)
-      Tree.Lazy { ctx =>
-        val fields =
-          for {
-            f <- g.getSchema().getFields().asScala
-          } yield fansi.Str.join(
-            render(renderFieldName(f.name)),
-            ": ",
-            render(treeifyAvro(g.get(f.name())))
-          )
-        List(
-          fansi.Color.LightGray("{ ").toString +
-            fields.reduce((a, b) => fansi.Str.join(a, ", ", b)) +
-            fansi.Color.LightGray(" }")
-        ).iterator
-      }
-  }
-
-  private def renderSpecificRecord: PartialFunction[SpecificRecordBase, Tree] = {
-    case x =>
-      val fs =
-        for {
-          f <- x.getSchema().getFields().asScala
-        } yield Tree.Infix(renderFieldName(f.name), "=", treeifyAvro(x.get(f.name())))
-      Tree.Apply(x.getClass().getSimpleName(), fs.toIterator)
-  }
-
-  private def treeifyAvro: PartialFunction[Any, Tree] = {
-    case x: SpecificRecordBase =>
-      renderSpecificRecord(x)
-    case g: GenericRecord =>
-      renderGenericRecord(g)
-    case x =>
-      printer.treeify(x)
-  }
-
-  private val handlers: PartialFunction[Any, Tree] = {
-    case x: GenericRecord => treeifyAvro(x)
-  }
-
-  val printer = pprint.PPrinter(additionalHandlers = handlers)
   def wrap[T: Coder](coll: SCollection[T]) =
     coll.map(t => TestWrapper(t))
 }
