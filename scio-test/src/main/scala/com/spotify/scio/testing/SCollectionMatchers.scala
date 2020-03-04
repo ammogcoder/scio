@@ -35,9 +35,11 @@ import org.hamcrest.MatcherAssert.assertThat
 import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 import com.twitter.chill.ClosureCleaner
+import org.apache.avro.generic.GenericRecord
+import org.apache.avro.specific.SpecificRecordBase
 
 private[testing] case class TestWrapper[T](value: T) {
-  override def toString: String = pprint.apply(value).render
+  override def toString: String = TestWrapper.printer.apply(value).render
   override def equals(other: Any): Boolean =
     other match {
       case TestWrapper(o) if value.getClass.isArray && o.getClass().isArray() =>
@@ -48,6 +50,23 @@ private[testing] case class TestWrapper[T](value: T) {
 }
 
 object TestWrapper {
+  import pprint.Tree
+  private def treeifyAvro: PartialFunction[Any, Tree] = {
+    // TODO: GenericRecord ?
+    case x: SpecificRecordBase =>
+      val fs =
+        for {
+          f <- x.getSchema().getFields().asScala
+        } yield Tree.Infix(Tree.Literal(f.name), "=", treeifyAvro(x.get(f.name())))
+      Tree.Apply(x.getClass().getSimpleName(), fs.toIterator)
+    case x => pprint.treeify(x)
+  }
+
+  private val handlers: PartialFunction[Any, Tree] = {
+    case x: GenericRecord => treeifyAvro(x)
+  }
+
+  val printer = pprint.PPrinter(additionalHandlers = handlers)
   def wrap[T: Coder](coll: SCollection[T]) =
     coll.map(t => TestWrapper(t))
 }
@@ -206,15 +225,19 @@ trait SCollectionMatchers {
         new Matcher[SCollection[T]] {
           override def apply(left: SCollection[T]): MatchResult = {
             val v = Externalizer(value.toSeq.map(x => TestWrapper(x))) // defeat closure
-            val f = makeFn[TestWrapper[T]] { in =>
-              assertThat(
-                in,
-                Matchers.not(Matchers.containsInAnyOrder(v.get: _*))
-              )
+            val matcher = {
+              val items = v.get.mkString("\n\t\t", "\n\t\t", "\n")
+              def message = s"Expected: iterable with items [$items]"
+              val c = Matchers.containsInAnyOrder(v.get: _*)
+              Matchers.describedAs(message, c, v.get: _*)
             }
+
+            val f = makeFn[TestWrapper[T]](in => assertThat(in, Matchers.not(matcher)))
+            val g = makeFn[TestWrapper[T]](in => assertThat(in, matcher))
+
             val assertion = builder(PAssert.that(serDeCycle(TestWrapper.wrap(left)).internal))
             m(
-              () => assertion.containsInAnyOrder(v.get.asJava),
+              () => assertion.satisfies(g),
               () => assertion.satisfies(f)
             )
           }
