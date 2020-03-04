@@ -35,23 +35,23 @@ import org.hamcrest.MatcherAssert.assertThat
 import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 import com.twitter.chill.ClosureCleaner
-import org.apache.avro.generic.GenericRecord
-import org.apache.avro.specific.SpecificRecordBase
+import cats.kernel.Eq
 
-private[testing] case class TestWrapper[T](value: T) {
+private[testing] case class TestWrapper[T: Eq](value: T) {
   override def toString: String = Pretty.printer.apply(value).render
   override def equals(other: Any): Boolean =
     other match {
-      case TestWrapper(o) if value.getClass.isArray && o.getClass().isArray() =>
-        value.asInstanceOf[Array[_]].sameElements(o.asInstanceOf[Array[_]])
-      case TestWrapper(o) => value.equals(o)
-      case _              => value.equals(other)
+      case TestWrapper(o: T) => Eq[T].eqv(value, o)
+      case o                 => value.equals(o)
     }
 }
 
 object TestWrapper {
-  def wrap[T: Coder](coll: SCollection[T]) =
+  def wrap[T: Coder: Eq](coll: SCollection[T]) =
     coll.map(t => TestWrapper(t))
+
+  implicit def testWrapperCoder[T: Coder: Eq]: Coder[TestWrapper[T]] =
+    Coder.gen[TestWrapper[T]]
 }
 
 /**
@@ -59,6 +59,8 @@ object TestWrapper {
  * [[com.spotify.scio.values.SCollection SCollection]]s.
  */
 trait SCollectionMatchers {
+
+  implicit def eqq[T]: Eq[T] = EqInstances.fallbackEq[T]
 
   sealed trait MatcherBuilder[T] {
     _: Matcher[T] =>
@@ -200,14 +202,14 @@ trait SCollectionMatchers {
     matcher.matcher(_.inEarlyGlobalWindowPanes)
 
   /** Assert that the SCollection in question contains the provided elements. */
-  def containInAnyOrder[T: Coder](
+  def containInAnyOrder[T: Coder: Eq](
     value: Iterable[T]
   ): IterableMatcher[SCollection[T], TestWrapper[T]] =
     new IterableMatcher[SCollection[T], TestWrapper[T]] {
       override def matcher(builder: AssertBuilder): Matcher[SCollection[T]] =
         new Matcher[SCollection[T]] {
+          val v = Externalizer(value.toSeq.map(x => TestWrapper(x))) // defeat closure
           override def apply(left: SCollection[T]): MatchResult = {
-            val v = Externalizer(value.toSeq.map(x => TestWrapper(x))) // defeat closure
             val matcher = {
               val items = v.get.mkString("\n\t\t", "\n\t\t", "\n")
               def message = s"Expected: iterable with items [$items]"
@@ -228,7 +230,7 @@ trait SCollectionMatchers {
     }
 
   /** Assert that the SCollection in question contains a single provided element. */
-  def containSingleValue[T: Coder](value: T): SingleMatcher[SCollection[T], TestWrapper[T]] =
+  def containSingleValue[T: Coder: Eq](value: T): SingleMatcher[SCollection[T], TestWrapper[T]] =
     new SingleMatcher[SCollection[T], TestWrapper[T]] {
       override def matcher(builder: AssertBuilder): Matcher[SCollection[T]] =
         new Matcher[SCollection[T]] {
@@ -245,7 +247,7 @@ trait SCollectionMatchers {
 
   /** Assert that the SCollection in question contains the provided element without making
    *  assumptions about other elements in the collection. */
-  def containValue[T: Coder](value: T): IterableMatcher[SCollection[T], TestWrapper[T]] =
+  def containValue[T: Coder: Eq](value: T): IterableMatcher[SCollection[T], TestWrapper[T]] =
     new IterableMatcher[SCollection[T], TestWrapper[T]] {
       override def matcher(builder: AssertBuilder): Matcher[SCollection[T]] =
         new Matcher[SCollection[T]] {
@@ -332,7 +334,7 @@ trait SCollectionMatchers {
   // TODO: investigate why multi-map doesn't work
 
   /** Assert that the SCollection in question satisfies the provided function. */
-  def satisfy[T: Coder](
+  def satisfy[T: Coder: Eq](
     predicate: Iterable[T] => Boolean
   ): IterableMatcher[SCollection[T], TestWrapper[T]] =
     new IterableMatcher[SCollection[T], TestWrapper[T]] {
@@ -356,7 +358,7 @@ trait SCollectionMatchers {
    * Assert that the SCollection in question contains a single element which satisfies the
    * provided function.
    */
-  def satisfySingleValue[T: Coder](
+  def satisfySingleValue[T: Coder: Eq](
     predicate: T => Boolean
   ): SingleMatcher[SCollection[T], TestWrapper[T]] =
     new SingleMatcher[SCollection[T], TestWrapper[T]] {
@@ -379,13 +381,17 @@ trait SCollectionMatchers {
     }
 
   /** Assert that all elements of the SCollection in question satisfy the provided function. */
-  def forAll[T: Coder](predicate: T => Boolean): IterableMatcher[SCollection[T], TestWrapper[T]] = {
+  def forAll[T: Coder: Eq](
+    predicate: T => Boolean
+  ): IterableMatcher[SCollection[T], TestWrapper[T]] = {
     val f = ClosureCleaner.clean(predicate)
     satisfy(_.forall(f))
   }
 
   /** Assert that some elements of the SCollection in question satisfy the provided function. */
-  def exist[T: Coder](predicate: T => Boolean): IterableMatcher[SCollection[T], TestWrapper[T]] = {
+  def exist[T: Coder: Eq](
+    predicate: T => Boolean
+  ): IterableMatcher[SCollection[T], TestWrapper[T]] = {
     val f = ClosureCleaner.clean(predicate)
     satisfy(_.exists(f))
   }
