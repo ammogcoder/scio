@@ -60,8 +60,6 @@ object TestWrapper {
  */
 trait SCollectionMatchers {
 
-  implicit def eqq[T]: Eq[T] = EqInstances.fallbackEq[T]
-
   sealed trait MatcherBuilder[T] {
     _: Matcher[T] =>
 
